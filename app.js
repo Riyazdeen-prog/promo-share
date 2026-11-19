@@ -77,7 +77,7 @@
     $('#retry').addEventListener('click', start);
   }
   function screenNoItems(d) {
-    app(welcomeHtml(d) + '<div class="card center-card"><div class="big-icon">🙏</div><h1>No promotion item today.</h1><p>Thank you!</p>' +
+    app(welcomeHtml(d) + '<div class="card center-card"><div class="big-icon">📭</div><h1>No promotion item today.</h1><p>Thank you!</p>' +
       '<p class="muted small">Please check again tomorrow.</p></div>');
   }
 
