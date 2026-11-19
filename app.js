@@ -172,7 +172,7 @@
     var html = welcomeHtml(d) + envHint() + guideHtml();
     d.items.forEach(function (it) { html += cardHtml(it); });
     if (d.proofEnabled) html += proofHtml(d);
-    html += '<p class="note small">“Shared ✓” means you completed the share. Please make sure you chose <b>My status</b>. Thank you for supporting our admissions! 🙏</p>';
+    html += '<p class="note small">“Shared ✓” means you completed the share. Please make sure you chose <b>My status</b>. Thank you for supporting our admissions! 💐</p>';
     app(html);
 
     var cp = $('#copy-page');
