@@ -5,6 +5,8 @@
  *  file as Blob → File → enable "Share to WhatsApp Status" → on tap call
  *  navigator.share() synchronously (fresh user gesture) → log result.
  *  All logging is fire-and-forget through a localStorage retry queue.
+ *  Notices: a sticky notice bar under the header (rotates / scrolls)
+ *  and a bottom-sheet list with "Mark as done" for task notices.
  *  No frameworks, no external requests except the API and media files.
  * =====================================================================
  */
@@ -138,6 +140,7 @@
       state.data = d;
       if (d.college) { $('#college').textContent = d.college; document.title = 'Share · ' + d.college; }
       render(d);
+      initNotices(d.notices);
       flushQueue();
     }).catch(function () {
       screenError('Please check your internet connection and try again.');
@@ -432,6 +435,306 @@
       };
       img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode')); };
       img.src = url;
+    });
+  }
+
+  /* ------------------------------------------------------------------
+   * Notices — sticky bar under the header + bottom-sheet list
+   *  • one notice at a time: short text stays still ~5 s, long text
+   *    scrolls slowly (≈45 px/s) after a 1.6 s pause, then the next one
+   *  • urgent first; task notices leave the bar once marked done
+   *  • tap the bar → full list; "Mark as done" needs a second tap
+   *  • prefers-reduced-motion → no scrolling, no fades
+   *  • "seen" / "done" go through the same offline retry queue as logs
+   * ---------------------------------------------------------------- */
+  var NKEY = 'promo_notice_v1';
+  var NPRI = {
+    urgent: { label: 'Urgent', icon: '⚠️' },
+    important: { label: 'Important', icon: '📌' },
+    info: { label: 'Info', icon: 'ℹ️' }
+  };
+  var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var NB = { list: [], bar: [], i: 0, timers: [], paused: false, open: false, armed: null, armTimer: null, me: null, bound: false, memStore: {} };
+
+  function nLoadMe() {
+    var all;
+    try { all = JSON.parse(localStorage.getItem(NKEY) || '{}') || {}; } catch (e) { all = NB.memStore; }
+    var me = all[token] || {};
+    ['opened', 'seen', 'done'].forEach(function (k) { if (!me[k] || typeof me[k] !== 'object') me[k] = {}; });
+    return me;
+  }
+  function nSaveMe() {
+    var ids = {};
+    NB.list.forEach(function (n) { ids[n.id] = true; });
+    ['opened', 'seen', 'done'].forEach(function (k) {   // forget notices that are no longer live
+      Object.keys(NB.me[k]).forEach(function (id) { if (!ids[id]) delete NB.me[k][id]; });
+    });
+    var all;
+    try { all = JSON.parse(localStorage.getItem(NKEY) || '{}') || {}; } catch (e) { all = NB.memStore; }
+    all[token] = NB.me;
+    try { localStorage.setItem(NKEY, JSON.stringify(all)); } catch (e) { NB.memStore = all; }
+  }
+
+  function nQueue(event, noticeId) {
+    var p = { action: 'notice', t: token, event: event, noticeId: noticeId, device: env.device, clientTs: Date.now(),
+      qid: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) };
+    var q = readQ(); q.push(p); writeQ(q);
+    flushQueue();
+  }
+  function nMarkSeen(n) {
+    if (NB.me.seen[n.id]) return;
+    NB.me.seen[n.id] = Date.now();
+    nSaveMe();
+    nQueue('seen', n.id);
+  }
+
+  function dueLabel(d) {
+    if (d === null || d === undefined || d === '') return '';
+    d = Number(d);
+    if (d <= 0) return 'Ends today';
+    if (d === 1) return 'Ends tomorrow';
+    return d + ' days left';
+  }
+  function nIsOpenTask(n) { return !(n.needsAck && n.done); }
+
+  function initNotices(list) {
+    var bar = $('#nbar');
+    if (!bar || !$('#nsheet')) return;   // old cached index.html without the notice markup
+    NB.list = (Array.isArray(list) ? list : []).filter(function (n) { return n && n.id && n.message; });
+    nClear();
+    if (!NB.list.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+    NB.me = nLoadMe();
+    NB.list.forEach(function (n) { if (NB.me.done[n.id]) n.done = true; });   // done offline, not yet synced
+    nSaveMe();
+    bar.hidden = false;
+    nBindOnce();
+    nPosition();
+    nBuildBar();
+    // A new urgent task opens the list once by itself
+    var urgentNew = NB.list.some(function (n) { return n.priority === 'urgent' && !NB.me.opened[n.id] && nIsOpenTask(n); });
+    if (urgentNew) nLater(function () { if (!NB.open) openSheet(); }, 900);
+  }
+
+  function nPosition() {
+    var h = $('.top');
+    $('#nbar').style.top = (h ? h.offsetHeight : 0) + 'px';
+  }
+
+  function nNewCount() {
+    return NB.list.filter(function (n) { return !NB.me.opened[n.id]; }).length;
+  }
+
+  function nBuildBar() {
+    var bar = $('#nbar');
+    NB.bar = NB.list.filter(nIsOpenTask);
+    var nNew = nNewCount();
+    var chip = nNew ? '<span class="nbar-chip" id="nbar-chip">' + nNew + ' new</span>'
+      : '<span class="nbar-chip soft" id="nbar-chip">' + (NB.list.length > 1 ? 'View all ' + NB.list.length : 'View') + '</span>';
+
+    if (!NB.bar.length) {   // every task is done → calm green bar
+      bar.className = 'nbar p-alldone';
+      bar.innerHTML = '<button type="button" class="nbar-btn" id="nbar-btn" aria-haspopup="dialog" aria-controls="nsheet" ' +
+        'aria-label="All tasks done. Open notices">' +
+        '<span class="nbar-ic" aria-hidden="true">✅</span><span class="nbar-track"><span class="nbar-text' + (reduceMotion ? ' still' : '') + '">All tasks done — thank you!</span></span>' +
+        chip + '</button>';
+      return;
+    }
+    var dots = '';
+    if (NB.bar.length > 1 && NB.bar.length <= 8) {
+      dots = '<div class="nbar-dots" aria-hidden="true">' + NB.bar.map(function () { return '<i></i>'; }).join('') + '</div>';
+    }
+    bar.innerHTML = '<button type="button" class="nbar-btn" id="nbar-btn" aria-haspopup="dialog" aria-controls="nsheet">' +
+      '<span class="nbar-ic" aria-hidden="true"></span>' +
+      '<span class="nbar-track"><span class="nbar-text' + (reduceMotion ? ' still' : '') + '" id="nbar-text"></span></span>' +
+      chip + '</button>' + dots;
+    if (NB.i >= NB.bar.length) NB.i = 0;
+    nShow(NB.i, true);
+  }
+
+  function nLater(fn, ms) { NB.timers.push(setTimeout(fn, ms)); }
+  function nClear() { NB.timers.forEach(clearTimeout); NB.timers = []; }
+
+  function nShow(i, instant) {
+    nClear();
+    if (!NB.bar.length || !$('#nbar-text')) return;
+    NB.i = (i + NB.bar.length) % NB.bar.length;
+    var n = NB.bar[NB.i];
+    var txt = $('#nbar-text');
+    function apply() {
+      var pri = NPRI[n.priority] || NPRI.info;
+      var bar = $('#nbar');
+      bar.className = 'nbar p-' + (NPRI[n.priority] ? n.priority : 'info');
+      var ic = $('.nbar-ic', bar);
+      ic.textContent = pri.icon;
+      ic.className = 'nbar-ic' + (n.priority === 'urgent' && !reduceMotion ? ' pulse' : '');
+      txt.style.transition = 'none';
+      txt.style.transform = 'translateX(0)';
+      txt.textContent = n.message;
+      txt.classList.remove('fade');
+      var dots = bar.querySelectorAll('.nbar-dots i');
+      for (var k = 0; k < dots.length; k++) dots[k].className = k === NB.i ? 'on' : '';
+      var due = dueLabel(n.daysLeft);
+      $('#nbar-btn').setAttribute('aria-label', (NB.bar.length > 1 ? 'Notice ' + (NB.i + 1) + ' of ' + NB.bar.length + '. ' : '') +
+        pri.label + ': ' + n.message + (due ? '. ' + due : '') + '. Tap to open all notices.');
+      nMarkSeen(n);
+      nRun();
+    }
+    if (instant || reduceMotion) apply();
+    else { txt.classList.add('fade'); nLater(apply, 300); }
+  }
+
+  function nRun() {
+    if (NB.paused || NB.open) return;
+    var track = $('.nbar-track'), txt = $('#nbar-text');
+    if (!track || !txt) return;
+    var multi = NB.bar.length > 1;
+    var over = txt.scrollWidth - track.clientWidth;
+    if (over > 4 && !reduceMotion) {
+      var secs = Math.max(2, over / 45);
+      nLater(function () {
+        txt.style.transition = 'transform ' + secs.toFixed(2) + 's linear';
+        txt.style.transform = 'translateX(' + (-over) + 'px)';
+        nLater(function () { nShow(NB.i + (multi ? 1 : 0)); }, secs * 1000 + 1800);
+      }, 1600);
+    } else if (multi) {
+      nLater(function () { nShow(NB.i + 1); }, reduceMotion ? 6000 : 5000);
+    }
+  }
+
+  function nPause() { NB.paused = true; nClear(); }
+  function nResume() {
+    NB.paused = false;
+    if (!NB.open && NB.bar.length) nShow(NB.i, true);
+  }
+
+  /* ---------------- bottom sheet ---------------- */
+  function ncardHtml(n) {
+    var pri = NPRI[n.priority] || NPRI.info;
+    var isNew = !NB.me.opened[n.id];
+    var due = dueLabel(n.daysLeft);
+    var done = n.needsAck && n.done;
+    var link = /^https:\/\//i.test(n.linkUrl || '')
+      ? '<a class="nbtn link" href="' + esc(n.linkUrl) + '" target="_blank" rel="noopener noreferrer">' + esc(n.linkText || 'Open') + ' ↗</a>' : '';
+    var act = '';
+    if (n.needsAck) {
+      act = done ? '<span class="ndone">✅ Done — thank you</span>'
+        : '<button type="button" class="nbtn done" data-nid="' + esc(n.id) + '">✓ Mark as done</button>';
+    }
+    return '<article class="ncard p-' + esc(NPRI[n.priority] ? n.priority : 'info') + (done ? ' is-done' : '') + '" id="nc-' + esc(n.id) + '">' +
+      '<div class="ncard-top"><span class="npri">' + pri.icon + ' ' + pri.label + '</span>' +
+      (isNew ? '<span class="nnew">New</span>' : '') +
+      (due && !done ? '<span class="ndue' + (Number(n.daysLeft) <= 0 ? ' late' : '') + '">⏰ ' + esc(due) + '</span>' : '') + '</div>' +
+      '<h3>' + esc(n.message) + '</h3>' +
+      (n.details ? '<p class="ndet">' + esc(n.details) + '</p>' : '') +
+      (link || act ? '<div class="nact">' + link + act + '</div>' : '') +
+      '</article>';
+  }
+
+  function renderSheet() {
+    var open = NB.list.filter(nIsOpenTask), done = NB.list.filter(function (n) { return !nIsOpenTask(n); });
+    $('#nsheet-body').innerHTML = open.concat(done).map(ncardHtml).join('') +
+      '<p class="nsheet-foot">Notices from the Admission Cell · tap ✕ or swipe down to close</p>';
+  }
+
+  function openSheet() {
+    if (NB.open || !NB.list.length) return;
+    NB.open = true;
+    nClear();
+    renderSheet();   // "New" labels show this one time
+    $('#nsheet').hidden = false;
+    document.body.classList.add('nsheet-open');
+    NB.lastFocus = document.activeElement;
+    setTimeout(function () { var x = $('#nsheet-x'); if (x) x.focus(); }, 60);
+    var changed = false;
+    NB.list.forEach(function (n) {
+      if (!NB.me.opened[n.id]) { NB.me.opened[n.id] = Date.now(); changed = true; }
+      nMarkSeen(n);
+    });
+    if (changed) nSaveMe();
+  }
+
+  function closeSheet() {
+    if (!NB.open) return;
+    NB.open = false;
+    nDisarm();
+    var sh = $('.nsheet');
+    sh.style.transition = ''; sh.style.transform = '';
+    $('#nsheet').hidden = true;
+    document.body.classList.remove('nsheet-open');
+    NB.paused = document.visibilityState === 'hidden';
+    nBuildBar();   // new count, finished tasks leave the bar
+    if (NB.lastFocus && NB.lastFocus.focus) { try { NB.lastFocus.focus({ preventScroll: true }); } catch (e) { /* old browsers */ } }
+  }
+
+  function nDisarm() {
+    clearTimeout(NB.armTimer);
+    if (NB.armed) {
+      var b = document.querySelector('.nbtn.done.confirm');
+      if (b) { b.classList.remove('confirm'); b.textContent = '✓ Mark as done'; }
+    }
+    NB.armed = null;
+  }
+
+  function onMarkDone(btn) {
+    var id = btn.getAttribute('data-nid');
+    if (NB.armed !== id) {   // first tap: ask to confirm (avoids accidental taps)
+      nDisarm();
+      NB.armed = id;
+      btn.classList.add('confirm');
+      btn.textContent = 'Tap again to confirm';
+      NB.armTimer = setTimeout(nDisarm, 4000);
+      return;
+    }
+    nDisarm();
+    var n = NB.list.filter(function (x) { return x.id === id; })[0];
+    if (!n) return;
+    n.done = true;
+    NB.me.done[id] = Date.now();
+    nSaveMe();
+    nQueue('done', id);
+    var card = document.getElementById('nc-' + id);
+    if (card) card.outerHTML = ncardHtml(n);
+    toast('✅ Marked as done — thank you!');
+  }
+
+  function nBindOnce() {
+    if (NB.bound) return;
+    NB.bound = true;
+    $('#nbar').addEventListener('click', function (e) { if (e.target.closest('#nbar-btn')) openSheet(); });
+    $('#nsheet-x').addEventListener('click', closeSheet);
+    $('#nsheet').addEventListener('click', function (e) { if (e.target.id === 'nsheet') closeSheet(); });
+    $('#nsheet-body').addEventListener('click', function (e) {
+      var b = e.target.closest('.nbtn.done');
+      if (b) onMarkDone(b);
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && NB.open) closeSheet(); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') nPause(); else nResume();
+    });
+    var rt;
+    window.addEventListener('resize', function () {
+      clearTimeout(rt);
+      rt = setTimeout(function () { nPosition(); if (!NB.open && !NB.paused) nShow(NB.i, true); }, 200);
+    });
+
+    // swipe down on the sheet to close
+    var sheet = $('.nsheet'), body = $('#nsheet-body'), y0 = null, dy = 0;
+    sheet.addEventListener('touchstart', function (e) {
+      var fromBody = body.contains(e.target);
+      y0 = (!fromBody || body.scrollTop <= 0) ? e.touches[0].clientY : null;
+      dy = 0;
+      sheet.style.transition = 'none';
+    }, { passive: true });
+    sheet.addEventListener('touchmove', function (e) {
+      if (y0 === null) return;
+      dy = e.touches[0].clientY - y0;
+      if (dy > 0) { sheet.style.transform = 'translateY(' + dy + 'px)'; if (e.cancelable) e.preventDefault(); }
+      else { sheet.style.transform = ''; }
+    }, { passive: false });
+    sheet.addEventListener('touchend', function () {
+      sheet.style.transition = '';
+      if (y0 !== null && dy > 90) closeSheet(); else sheet.style.transform = '';
+      y0 = null; dy = 0;
     });
   }
 
