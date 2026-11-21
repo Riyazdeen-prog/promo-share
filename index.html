@@ -8,11 +8,11 @@
   <meta name="theme-color" content="#0b3d91">
   <meta name="format-detection" content="telephone=no">
   <title>Share to WhatsApp Status</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2">
   <link rel="icon" type="image/png" sizes="192x192" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <script src="config.js"></script>
-  <script defer src="app.js"></script>
+  <script defer src="app.js?v=2"></script>
 </head>
 <body>
   <header class="top">
@@ -23,12 +23,27 @@
     </div>
   </header>
 
+  <!-- Notice bar (filled by app.js when the API returns notices) -->
+  <div id="nbar" class="nbar" hidden></div>
+
   <main id="app" aria-live="polite">
     <div class="center"><div class="spinner" aria-hidden="true"></div><p>Loading…</p></div>
   </main>
 
   <footer class="foot" id="foot"></footer>
   <div id="toast" class="toast" role="status" hidden></div>
+
+  <!-- Notice list (bottom sheet) -->
+  <div id="nsheet" class="nsheet-bd" hidden>
+    <div class="nsheet" role="dialog" aria-modal="true" aria-labelledby="nsheet-title">
+      <div class="nsheet-grab" aria-hidden="true"></div>
+      <div class="nsheet-head">
+        <h2 id="nsheet-title">📢 Notices</h2>
+        <button type="button" class="nsheet-x" id="nsheet-x" aria-label="Close notices">✕</button>
+      </div>
+      <div class="nsheet-body" id="nsheet-body"></div>
+    </div>
+  </div>
 
   <noscript><p class="center">Please enable JavaScript to use this page.</p></noscript>
 </body>
