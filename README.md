@@ -37,11 +37,24 @@ Apps Script is used only as the JSON API + Admin Panel.
 
 | Call | Request | Response |
 |---|---|---|
-| Init | `GET API_URL?action=init&t=TOKEN` | `{ok, college, faculty:{name, dept}, items:[{itemCode, title, type, caption, mediaUrl, sharedByMe}], proofEnabled}` |
+| Init | `GET API_URL?action=init&t=TOKEN` | `{ok, college, faculty:{name, dept}, items:[{itemCode, title, type, caption, mediaUrl, sharedByMe}], proofEnabled, notices:[{id, message, details, priority, end, daysLeft, linkUrl, linkText, needsAck, done}]}` |
 | Log | `POST {"action":"log","t":TOKEN,"itemCode":"P001","event":"share_success","device":"Android","browser":"Chrome"}` (optional `itemCodes:[…]`, `clientTs`) | `{ok:true}` |
 | Proof | `POST {"action":"proof","t":TOKEN,"itemCode":"P001","views":123,"imageBase64":"…"}` | `{ok:true, url}` |
+| Notice | `POST {"action":"notice","t":TOKEN,"noticeId":"N001","event":"seen"\|"done","device":"Android"}` | `{ok:true}` (duplicates ignored) |
 
 POST bodies are sent as `Content-Type: text/plain;charset=utf-8` with a JSON string — this avoids the CORS pre-flight that Apps Script cannot answer.
+
+## Notice bar
+
+Notices are created in the Admin Panel → **📢 Notices** tab and saved in the `Notices` sheet.
+On this page they appear as a sticky bar under the header:
+
+- one notice at a time, urgent first; long messages scroll slowly, then the next notice shows
+- tapping the bar opens the full list (bottom sheet) with details, link button and **Mark as done**
+- a new **urgent** notice opens the list once by itself
+- “Mark as done” needs a second tap to confirm; finished tasks leave the bar
+- `seen` / `done` events use the same offline retry queue as the share logs
+- respects the phone's *reduce motion* setting (no scrolling or fades)
 
 ## Notes
 
