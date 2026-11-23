@@ -87,7 +87,10 @@
     var dt = new Date();
     var dateStr = dt.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
     return '<section class="welcome"><div class="hello">Welcome, <b>' + esc(d.faculty.name) + '</b></div>' +
-      '<div class="muted small">' + esc(d.faculty.dept) + ' · ' + esc(dateStr) + '</div></section>';
+      '<div class="muted small">' + esc(d.faculty.dept) + ' · ' + esc(dateStr) + '</div>' +
+      '<div class="daily-note" style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#fff7e0;border:1px solid #f2d68a;color:#5a4300;font-size:13.5px;line-height:1.5">' +
+      '📢 Check daily at 5 PM for today’s WhatsApp status poster.<br>' +
+      'Your cooperation and support are highly appreciated.</div></section>';
   }
 
   function guideHtml() {
